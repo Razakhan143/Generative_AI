@@ -216,9 +216,36 @@ async def health_check():
 # --------------------------------------------------------
 # Run FastAPI inside Streamlit background thread
 # --------------------------------------------------------
-def run_api():
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+# ------------------------------
+# Helper: check if port in use
+# ------------------------------
+import socket
+def is_port_in_use(port: int, host: str = "0.0.0.0") -> bool:
+    """Return True if port is bound on host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+# ------------------------------
+# Start FastAPI in background (only if port free)
+# ------------------------------
+API_PORT = int(os.environ.get("API_PORT", "8000"))
+API_HOST = "0.0.0.0"
 
-threading.Thread(target=run_api, daemon=True).start()
 
-st.write("✅ FastAPI backend running at `/proxy/8000/api/...`")
+def run_api_background():
+    """Start Uvicorn server if port not in use. This is safe to call multiple times."""
+    if is_port_in_use(API_PORT, API_HOST):
+        print(f"⚠️ Port {API_PORT} already in use — skipping Uvicorn start.")
+        return
+
+    print(f"🚀 Starting Uvicorn on {API_HOST}:{API_PORT} (background thread)")
+    # This will block until server exits; run it in daemon thread
+    uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="info")
+
+
+# Launch background thread (daemon) so Streamlit script can exit/restart without blocking
+thread = threading.Thread(target=run_api_background, daemon=True)
+thread.start()
+
+# Minimal Streamlit message (hidden UI will not show, but logs visible)
+st.write(f"✅ FastAPI background server attempted to start on port {API_PORT}. Check logs for status.")
