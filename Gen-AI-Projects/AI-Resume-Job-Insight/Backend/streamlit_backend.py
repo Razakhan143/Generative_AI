@@ -1,19 +1,21 @@
 import tempfile
 import traceback
+import threading
 import asyncio
 import base64
 import os
 import time
+
 from fastapi import FastAPI, UploadFile, Form, Request
 from starlette.middleware.cors import CORSMiddleware
 from langchain_google_genai import ChatGoogleGenerativeAI
 import helper_function
 import streamlit as st
-from streamlit.web.server import Server
+import uvicorn
 
-# -----------------------------------
+# --------------------------------------------------------
 # Disable Streamlit UI completely
-# -----------------------------------
+# --------------------------------------------------------
 st.set_page_config(page_title="", layout="wide", initial_sidebar_state="collapsed")
 
 hide_streamlit_style = """
@@ -26,13 +28,13 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-# -----------------------------------
+# --------------------------------------------------------
 # Create FastAPI app
-# -----------------------------------
-api = FastAPI()
+# --------------------------------------------------------
+app = FastAPI()
 
 # Allow CORS
-api.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -40,10 +42,11 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
-# -----------------------------------
+
+# --------------------------------------------------------
 # API: Process Resume
-# -----------------------------------
-@api.post("/api/process-resume")
+# --------------------------------------------------------
+@app.post("/api/process-resume")
 async def process_resume(
     request: Request,
     job_description: str = Form(""),
@@ -110,9 +113,11 @@ async def process_resume(
             response = (model | parser_main).invoke(main_prompt)
 
             if response and hasattr(response, 'get'):
+                # Fix Interview Q&A
                 if 'Interview Q&A' in response:
                     response['Interview Q&A'] = helper_function.format_interview_qa(response['Interview Q&A'])
 
+                # Clean percentage values
                 if 'Match Percentage' in response:
                     response['Match Percentage'] = helper_function.clean_percentage(response['Match Percentage'])
         except Exception:
@@ -123,6 +128,7 @@ async def process_resume(
     try:
         parser_visual, visual_prompt = helper_function.visualize_data(res_resume, res_jobdes)
         visualize_value = (model | parser_visual).invoke(visual_prompt)
+
         if visualize_value and hasattr(visualize_value, 'get'):
             if 'visual Match Percentage' in visualize_value:
                 visualize_value['visual Match Percentage'] = helper_function.clean_percentage(
@@ -133,7 +139,6 @@ async def process_resume(
 
     end_time = time.time()
     print(f"✅ Processing time: {end_time - start_time:.2f} seconds for model '{model_name}'")
-
     return {
         "success": True,
         "compare_response": response,
@@ -142,29 +147,40 @@ async def process_resume(
         "analysis": visualize_value,
     }
 
-# -----------------------------------
+
+# --------------------------------------------------------
 # API: Generate Resume
-# -----------------------------------
-@api.post("/api/generate-resume")
+# --------------------------------------------------------
+@app.post("/api/generate-resume")
 async def generate_resume(request: Request):
     try:
         print("✅ API hit: /api/generate-resume")
-        body = await request.json()
 
-        feedback_data = {
-            "improvements": body.get("improvements", ""),
-            "ats_keywords": body.get("atsKeywords", ""),
-            "analysis": body.get("analysis", {}),
-            "job_description": body.get("jobDescription", {})
-        }
-        candidate_info = body.get("resumeText", {})
-        name = body.get("name", candidate_info.get("Name", "Generated_Resume"))
+        try:
+            body = await request.json()
+            feedback_data = {
+                "improvements": body.get("improvements", ""),
+                "ats_keywords": body.get("atsKeywords", ""),
+                "analysis": body.get("analysis", {}),
+                "job_description": body.get("jobDescription", {})
+            }
+            candidate_info = body.get("resumeText", {})
+            if not candidate_info.get("name") and not candidate_info.get("Name"):
+                candidate_info["Name"] = "Professional Candidate"
+            name = body.get("name", candidate_info.get("Name", "Generated_Resume"))
+        except Exception:
+            # fallback to form data
+            form = await request.form()
+            feedback_data = form.get("response", "")
+            candidate_info = form.get("resume_text", "")
+            name = form.get("name", "Generated_Resume")
 
         model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
         resume_parser, resume_prompt = helper_function.generate_resume_from_feedback(feedback_data, candidate_info)
         output_resume = (model | resume_parser).invoke(resume_prompt)
 
         formatted_resume = helper_function.format_resume_as_text(output_resume)
+
         name = name.replace(" ", "_")
         pdf_filename = f"{name}.pdf"
         helper_function.create_resume_pdf(output_resume, file_name=pdf_filename)
@@ -187,22 +203,22 @@ async def generate_resume(request: Request):
         traceback.print_exc()
         return {"success": False, "error": str(e)}
 
-# -----------------------------------
+
+# --------------------------------------------------------
 # Health Check
-# -----------------------------------
-@api.post("/api/health")
+# --------------------------------------------------------
+@app.get("/api/health")
 async def health_check():
+    print("✅ API hit: /api/health")
     return {"success": True, "message": "API is healthy 200 OK"}
 
-# -----------------------------------
-# Mount FastAPI into Streamlit
-# -----------------------------------
-def mount_fastapi(app: FastAPI):
-    server = Server.get_current()
-    if not server:
-        raise RuntimeError("Streamlit server is not running")
-    server._runtime._app.mount("/api", app)
 
-mount_fastapi(api)
+# --------------------------------------------------------
+# Run FastAPI inside Streamlit background thread
+# --------------------------------------------------------
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
-st.write("✅ FastAPI backend mounted at `/api` (UI hidden)")
+threading.Thread(target=run_api, daemon=True).start()
+
+st.write("✅ FastAPI backend running at `/proxy/8000/api/...`")
