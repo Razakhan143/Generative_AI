@@ -5,8 +5,10 @@ import asyncio
 import base64
 import os
 import time
+import socket
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, Form, Request
+from fastapi import FastAPI, UploadFile, Form, Request, HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from langchain_google_genai import ChatGoogleGenerativeAI
 import helper_function
@@ -14,26 +16,54 @@ import streamlit as st
 import uvicorn
 
 # --------------------------------------------------------
-# Disable Streamlit UI completely
+# Streamlit Configuration for Streamlit Cloud
 # --------------------------------------------------------
-st.set_page_config(page_title="", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Resume Job Insights API", 
+    layout="wide", 
+    initial_sidebar_state="collapsed"
+)
 
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .stApp {visibility: hidden;}
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# Only hide UI if running as API server
+if os.environ.get("STREAMLIT_SERVER_MODE") == "api":
+    hide_streamlit_style = """
+        <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        .stApp {visibility: hidden;}
+        </style>
+    """
+    st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # --------------------------------------------------------
-# Create FastAPI app
+# FastAPI Application with Lifespan Management
 # --------------------------------------------------------
-app = FastAPI()
 
-# Allow CORS
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("🚀 FastAPI application starting up...")
+    try:
+        os.environ["GOOGLE_API_KEY"] = st.secrets.get("GOOGLE_API_KEY", "")
+        if not os.environ["GOOGLE_API_KEY"]:
+            print("⚠️ Warning: GOOGLE_API_KEY not found in secrets")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not load secrets: {e}")
+    
+    yield
+    
+    # Shutdown
+    print("🛑 FastAPI application shutting down...")
+
+app = FastAPI(
+    title="Resume Job Insights API",
+    description="API for resume analysis and generation",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,155 +72,242 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --------------------------------------------------------
+# Utility Functions
+# --------------------------------------------------------
+
+def get_model(model_name: str):
+    """Initialize and return the language model"""
+    try:
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY not found in environment")
+        
+        model = ChatGoogleGenerativeAI(model=model_name, temperature=0)
+        print(f"✅ Model '{model_name}' initialized successfully.")
+        return model
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model initialization failed: {str(e)}")
+
+def is_port_in_use(port: int, host: str = "0.0.0.0") -> bool:
+    """Check if port is already in use"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            result = s.connect_ex((host, port))
+            return result == 0
+    except Exception:
+        return False
 
 # --------------------------------------------------------
-# API: Process Resume
+# API Endpoints
 # --------------------------------------------------------
+
 @app.post("/api/process-resume")
 async def process_resume(
     request: Request,
     job_description: str = Form(""),
     resume: UploadFile = Form(None)
 ):
+    """Process resume and job description for analysis"""
     start_time = time.time()
-    form = await request.form()
-    print("✅ API hit: /api/process-resume")
-
-    # Pick server → model
-    selected_server = form.get("selectedServer", "server2")
-    if selected_server == "server1":
-        model_name = "gemini-2.5-pro"
-    elif selected_server == "server2":
-        model_name = "gemini-2.5-flash"
-    else:
-        model_name = "gemini-2.0-flash"
-
+    
     try:
-        os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
-        model = ChatGoogleGenerativeAI(model=model_name, temperature=0)
-        print(f"✅ Model '{model_name}' initialized successfully.")
-    except Exception as e:
-        return {"success": False, "error": f"Model initialization failed: {str(e)}"}
+        form = await request.form()
+        print("✅ API hit: /api/process-resume")
 
-    # Save resume
-    resume_path = None
-    if resume:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(await resume.read())
-            resume_path = tmp.name
+        # Model selection
+        selected_server = form.get("selectedServer", "server2")
+        model_mapping = {
+            "server1": "gemini-2.5-pro",
+            "server2": "gemini-2.5-flash", 
+            "server3": "gemini-2.0-flash"
+        }
+        model_name = model_mapping.get(selected_server, "gemini-2.5-flash")
+        
+        # Initialize model
+        model = get_model(model_name)
 
-    # Extract resume text
-    try:
-        resume_text = helper_function.extract_text_from_pdf(resume_path)
-        if not resume_text.strip():
-            raise ValueError("Resume PDF is empty or unreadable.")
-    except Exception as e:
-        traceback.print_exc()
-        return {"success": False, "error": f"Resume extraction failed: {str(e)}"}
+        # Validate inputs
+        if not resume:
+            raise HTTPException(status_code=400, detail="Resume file is required")
+        
+        if not job_description and not form.get("jobDescription") and not form.get("jobUrl"):
+            raise HTTPException(status_code=400, detail="Job description is required")
 
-    # Parse resume
-    try:
-        parser_resume, resume_prompt = helper_function.parse_resume_with_llm(resume_text)
-        res_resume = (model | parser_resume).invoke(resume_prompt)
-    except Exception:
-        traceback.print_exc()
-        res_resume = None
-
-    # Parse job description
-    job_description = form.get("jobDescription") or form.get("jobUrl")
-    try:
-        parser_jobdes, jobdes_prompt = helper_function.job_description(job_description)
-        res_jobdes = (model | parser_jobdes).invoke(jobdes_prompt)
-    except Exception:
-        traceback.print_exc()
-        res_jobdes = None
-
-    # Compare
-    response = None
-    if res_resume and res_jobdes:
+        # Save and process resume
+        resume_path = None
         try:
-            parser_main, main_prompt = helper_function.comparing(res_resume, res_jobdes)
-            response = (model | parser_main).invoke(main_prompt)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                content = await resume.read()
+                if len(content) == 0:
+                    raise ValueError("Resume file is empty")
+                tmp.write(content)
+                resume_path = tmp.name
 
-            if response and hasattr(response, 'get'):
-                # Fix Interview Q&A
-                if 'Interview Q&A' in response:
-                    response['Interview Q&A'] = helper_function.format_interview_qa(response['Interview Q&A'])
+            # Extract resume text
+            resume_text = helper_function.extract_text_from_pdf(resume_path)
+            if not resume_text.strip():
+                raise ValueError("Resume PDF is empty or unreadable")
+                
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Resume processing failed: {str(e)}")
+        finally:
+            # Clean up temp file
+            if resume_path and os.path.exists(resume_path):
+                try:
+                    os.unlink(resume_path)
+                except Exception:
+                    pass
 
-                # Clean percentage values
-                if 'Match Percentage' in response:
-                    response['Match Percentage'] = helper_function.clean_percentage(response['Match Percentage'])
-        except Exception:
-            traceback.print_exc()
+        # Parse resume
+        res_resume = None
+        try:
+            parser_resume, resume_prompt = helper_function.parse_resume_with_llm(resume_text)
+            res_resume = (model | parser_resume).invoke(resume_prompt)
+        except Exception as e:
+            print(f"❌ Resume parsing error: {e}")
 
-    # Visualization
-    visualize_value = None
-    try:
-        parser_visual, visual_prompt = helper_function.visualize_data(res_resume, res_jobdes)
-        visualize_value = (model | parser_visual).invoke(visual_prompt)
+        # Get job description from form
+        job_desc = (
+            form.get("jobDescription") or 
+            form.get("jobUrl") or 
+            job_description
+        )
 
-        if visualize_value and hasattr(visualize_value, 'get'):
-            if 'visual Match Percentage' in visualize_value:
-                visualize_value['visual Match Percentage'] = helper_function.clean_percentage(
-                    visualize_value['visual Match Percentage']
-                )
-    except Exception:
+        # Parse job description
+        res_jobdes = None
+        try:
+            parser_jobdes, jobdes_prompt = helper_function.job_description(job_desc)
+            res_jobdes = (model | parser_jobdes).invoke(jobdes_prompt)
+        except Exception as e:
+            print(f"❌ Job description parsing error: {e}")
+
+        # Compare resume and job
+        response = None
+        if res_resume and res_jobdes:
+            try:
+                parser_main, main_prompt = helper_function.comparing(res_resume, res_jobdes)
+                response = (model | parser_main).invoke(main_prompt)
+
+                if response and hasattr(response, 'get'):
+                    if 'Interview Q&A' in response:
+                        response['Interview Q&A'] = helper_function.format_interview_qa(
+                            response['Interview Q&A']
+                        )
+                    if 'Match Percentage' in response:
+                        response['Match Percentage'] = helper_function.clean_percentage(
+                            response['Match Percentage']
+                        )
+            except Exception as e:
+                print(f"❌ Comparison error: {e}")
+
+        # Generate visualization data
+        visualize_value = None
+        if res_resume and res_jobdes:
+            try:
+                parser_visual, visual_prompt = helper_function.visualize_data(res_resume, res_jobdes)
+                visualize_value = (model | parser_visual).invoke(visual_prompt)
+
+                if visualize_value and hasattr(visualize_value, 'get'):
+                    if 'visual Match Percentage' in visualize_value:
+                        visualize_value['visual Match Percentage'] = helper_function.clean_percentage(
+                            visualize_value['visual Match Percentage']
+                        )
+            except Exception as e:
+                print(f"❌ Visualization error: {e}")
+
+        end_time = time.time()
+        print(f"✅ Processing completed in {end_time - start_time:.2f}s using {model_name}")
+        
+        return {
+            "success": True,
+            "compare_response": response,
+            "resume_text": res_resume,
+            "job_description": res_jobdes,
+            "analysis": visualize_value,
+            "processing_time": round(end_time - start_time, 2),
+            "model_used": model_name
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
         traceback.print_exc()
-
-    end_time = time.time()
-    print(f"✅ Processing time: {end_time - start_time:.2f} seconds for model '{model_name}'")
-    return {
-        "success": True,
-        "compare_response": response,
-        "resume_text": res_resume,
-        "job_description": res_jobdes,
-        "analysis": visualize_value,
-    }
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-# --------------------------------------------------------
-# API: Generate Resume
-# --------------------------------------------------------
 @app.post("/api/generate-resume")
 async def generate_resume(request: Request):
+    """Generate optimized resume based on feedback"""
     try:
         print("✅ API hit: /api/generate-resume")
 
+        # Parse request data
         try:
-            body = await request.json()
-            feedback_data = {
-                "improvements": body.get("improvements", ""),
-                "ats_keywords": body.get("atsKeywords", ""),
-                "analysis": body.get("analysis", {}),
-                "job_description": body.get("jobDescription", {})
-            }
-            candidate_info = body.get("resumeText", {})
-            if not candidate_info.get("name") and not candidate_info.get("Name"):
-                candidate_info["Name"] = "Professional Candidate"
-            name = body.get("name", candidate_info.get("Name", "Generated_Resume"))
-        except Exception:
-            # fallback to form data
-            form = await request.form()
-            feedback_data = form.get("response", "")
-            candidate_info = form.get("resume_text", "")
-            name = form.get("name", "Generated_Resume")
-
-        model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-        resume_parser, resume_prompt = helper_function.generate_resume_from_feedback(feedback_data, candidate_info)
-        output_resume = (model | resume_parser).invoke(resume_prompt)
-
-        formatted_resume = helper_function.format_resume_as_text(output_resume)
-
-        name = name.replace(" ", "_")
-        pdf_filename = f"{name}.pdf"
-        helper_function.create_resume_pdf(output_resume, file_name=pdf_filename)
-
-        pdf_base64 = None
-        try:
-            with open(pdf_filename, 'rb') as pdf_file:
-                pdf_base64 = base64.b64encode(pdf_file.read()).decode('utf-8')
+            if request.headers.get("content-type", "").startswith("application/json"):
+                body = await request.json()
+                feedback_data = {
+                    "improvements": body.get("improvements", ""),
+                    "ats_keywords": body.get("atsKeywords", ""),
+                    "analysis": body.get("analysis", {}),
+                    "job_description": body.get("jobDescription", {})
+                }
+                candidate_info = body.get("resumeText", {})
+                name = body.get("name", "Generated_Resume")
+            else:
+                form = await request.form()
+                feedback_data = {
+                    "improvements": form.get("improvements", ""),
+                    "ats_keywords": form.get("atsKeywords", ""),
+                    "analysis": form.get("analysis", {}),
+                    "job_description": form.get("jobDescription", {})
+                }
+                candidate_info = form.get("resumeText", {})
+                name = form.get("name", "Generated_Resume")
         except Exception as e:
-            print("❌ Error reading PDF:", e)
+            raise HTTPException(status_code=400, detail=f"Invalid request format: {str(e)}")
+
+        # Set default name if missing
+        if not candidate_info.get("name") and not candidate_info.get("Name"):
+            candidate_info["Name"] = "Professional Candidate"
+
+        # Initialize model
+        model = get_model("gemini-2.5-flash")
+
+        # Generate resume
+        try:
+            resume_parser, resume_prompt = helper_function.generate_resume_from_feedback(
+                feedback_data, candidate_info
+            )
+            output_resume = (model | resume_parser).invoke(resume_prompt)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Resume generation failed: {str(e)}")
+
+        # Format resume
+        try:
+            formatted_resume = helper_function.format_resume_as_text(output_resume)
+        except Exception as e:
+            print(f"⚠️ Resume formatting warning: {e}")
+            formatted_resume = str(output_resume)
+
+        # Generate PDF
+        pdf_base64 = None
+        pdf_filename = f"{name.replace(' ', '_')}.pdf"
+        
+        try:
+            helper_function.create_resume_pdf(output_resume, file_name=pdf_filename)
+            
+            if os.path.exists(pdf_filename):
+                with open(pdf_filename, 'rb') as pdf_file:
+                    pdf_base64 = base64.b64encode(pdf_file.read()).decode('utf-8')
+                # Clean up
+                os.unlink(pdf_filename)
+            else:
+                print("⚠️ Warning: PDF file was not created")
+                
+        except Exception as e:
+            print(f"⚠️ PDF generation warning: {e}")
 
         return {
             "success": True,
@@ -199,53 +316,148 @@ async def generate_resume(request: Request):
             "pdf_base64": pdf_base64,
             "filename": pdf_filename
         }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-# --------------------------------------------------------
-# Health Check
-# --------------------------------------------------------
 @app.get("/api/health")
 async def health_check():
+    """Health check endpoint"""
     print("✅ API hit: /api/health")
-    return {"success": True, "message": "API is healthy 200 OK"}
+    return {
+        "success": True, 
+        "message": "API is healthy 200 OK",
+        "timestamp": time.time(),
+        "status": "running"
+    }
 
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "Resume Job Insights API",
+        "version": "1.0.0",
+        "health": "/api/health",
+        "endpoints": ["/api/process-resume", "/api/generate-resume"]
+    }
 
 # --------------------------------------------------------
-# Run FastAPI inside Streamlit background thread
+# Server Management for Streamlit Cloud
 # --------------------------------------------------------
-# ------------------------------
-# Helper: check if port in use
-# ------------------------------
-import socket
-def is_port_in_use(port: int, host: str = "0.0.0.0") -> bool:
-    """Return True if port is bound on host."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        return s.connect_ex((host, port)) == 0
-# ------------------------------
-# Start FastAPI in background (only if port free)
-# ------------------------------
-API_PORT = int(os.environ.get("API_PORT", "8000"))
-API_HOST = "0.0.0.0"
 
+def run_fastapi_server():
+    """Run FastAPI server with proper configuration for Streamlit Cloud"""
+    # Get port from environment or use default
+    port = int(os.environ.get("API_PORT", "8000"))
+    host = os.environ.get("API_HOST", "0.0.0.0")
+    
+    # Check if port is available
+    if is_port_in_use(port, host):
+        print(f"⚠️ Port {port} is already in use")
+        return False
+        
+    try:
+        print(f"🚀 Starting FastAPI server on {host}:{port}")
+        
+        # Configure uvicorn for production
+        config = uvicorn.Config(
+            app=app,
+            host=host,
+            port=port,
+            log_level="info",
+            access_log=True,
+            loop="asyncio",
+            # Add these for better Streamlit Cloud compatibility
+            ws_ping_interval=20,
+            ws_ping_timeout=20,
+        )
+        
+        server = uvicorn.Server(config)
+        server.run()
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to start server: {e}")
+        return False
 
-def run_api_background():
-    """Start Uvicorn server if port not in use. This is safe to call multiple times."""
-    if is_port_in_use(API_PORT, API_HOST):
-        print(f"⚠️ Port {API_PORT} already in use — skipping Uvicorn start.")
-        return
+# --------------------------------------------------------
+# Streamlit Interface
+# --------------------------------------------------------
 
-    print(f"🚀 Starting Uvicorn on {API_HOST}:{API_PORT} (background thread)")
-    # This will block until server exits; run it in daemon thread
-    uvicorn.run(app, host=API_HOST, port=API_PORT, log_level="info")
+def show_streamlit_interface():
+    """Show Streamlit interface when not in API mode"""
+    st.title("🎯 Resume Job Insights API Server")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("**Server Status**")
+        port = int(os.environ.get("API_PORT", "8000"))
+        host = os.environ.get("API_HOST", "0.0.0.0")
+        
+        if is_port_in_use(port, host):
+            st.success(f"✅ API Server Running on port {port}")
+        else:
+            st.warning(f"⚠️ API Server not detected on port {port}")
+    
+    with col2:
+        st.info("**Available Endpoints**")
+        st.code(f"""
+POST /api/process-resume
+POST /api/generate-resume  
+GET  /api/health
+GET  /
+        """)
+    
+    st.divider()
+    
+    # Server controls
+    st.subheader("🛠️ Server Management")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Start API Server", type="primary"):
+            with st.spinner("Starting server..."):
+                if run_fastapi_server():
+                    st.success("✅ Server started successfully!")
+                else:
+                    st.error("❌ Failed to start server")
+    
+    with col2:
+        if st.button("🔍 Test Health Check"):
+            try:
+                import requests
+                response = requests.get(f"http://localhost:{port}/api/health", timeout=5)
+                if response.status_code == 200:
+                    st.success("✅ Health check passed!")
+                    st.json(response.json())
+                else:
+                    st.error(f"❌ Health check failed: {response.status_code}")
+            except Exception as e:
+                st.error(f"❌ Connection failed: {str(e)}")
+    
+    # Configuration
+    st.subheader("⚙️ Configuration")
+    st.code(f"""
+API_HOST: {os.environ.get('API_HOST', '0.0.0.0')}
+API_PORT: {os.environ.get('API_PORT', '8000')}
+GOOGLE_API_KEY: {'✅ Set' if os.environ.get('GOOGLE_API_KEY') else '❌ Not Set'}
+""")
 
+# --------------------------------------------------------
+# Main Application Logic
+# --------------------------------------------------------
 
-# Launch background thread (daemon) so Streamlit script can exit/restart without blocking
-thread = threading.Thread(target=run_api_background, daemon=True)
-thread.start()
-
-# Minimal Streamlit message (hidden UI will not show, but logs visible)
-st.write(f"✅ FastAPI background server attempted to start on port {API_PORT}. Check logs for status.")
+if __name__ == "__main__":
+    # Check if running as API server or Streamlit interface
+    if os.environ.get("STREAMLIT_SERVER_MODE") == "api":
+        # Run only FastAPI (hidden Streamlit)
+        threading.Thread(target=run_fastapi_server, daemon=True).start()
+        st.write("FastAPI server running in background...")
+    else:
+        # Show Streamlit interface with server controls
+        show_streamlit_interface()
