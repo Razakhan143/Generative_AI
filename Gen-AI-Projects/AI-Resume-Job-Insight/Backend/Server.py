@@ -328,13 +328,11 @@ async def generate_resume(request: Request):
 # Run FastAPI application
 # -----------------------------------
 if __name__ == "__main__":
+    import os
     print("🚀 Starting Resume Processing API...")
     print("📄 API Documentation available at: http://localhost:8502/docs")
     print("🔍 Interactive API explorer at: http://localhost:8502/redoc")
     
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8502, 
-        log_level="info"
-    )
+    # Update the main block:
+    port = int(os.environ.get("PORT", 8502))
+    uvicorn.run(app, host="0.0.0.0", port=port)
