@@ -1,0 +1,35 @@
+<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with gradient -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="90" cy="90" r="90" fill="url(#bg)"/>
+  
+  <!-- Document/Resume -->
+  <rect x="45" y="40" width="60" height="85" rx="8" fill="white" opacity="0.95"/>
+  
+  <!-- Header line (name) -->
+  <rect x="55" y="55" width="40" height="8" rx="3" fill="#1d4ed8"/>
+  
+  <!-- Content lines -->
+  <rect x="55" y="70" width="28" height="4" rx="2" fill="#64748b"/>
+  <rect x="55" y="78" width="35" height="4" rx="2" fill="#64748b"/>
+  <rect x="55" y="86" width="22" height="4" rx="2" fill="#64748b"/>
+  <rect x="55" y="94" width="32" height="4" rx="2" fill="#64748b"/>
+  <rect x="55" y="102" width="25" height="4" rx="2" fill="#64748b"/>
+  <rect x="55" y="110" width="30" height="4" rx="2" fill="#64748b"/>
+  
+  <!-- AI/Match indicator -->
+  <circle cx="128" cy="55" r="22" fill="#10b981"/>
+  <path d="M118 55L125 62L138 49" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- AI sparkles -->
+  <circle cx="65" cy="115" r="4" fill="#fbbf24" opacity="0.8"/>
+  <circle cx="85" cy="110" r="3" fill="#fbbf24" opacity="0.6"/>
+  <circle cx="75" cy="125" r="2.5" fill="#fbbf24" opacity="0.7"/>
+</svg>
