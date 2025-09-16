@@ -99,7 +99,7 @@ const getTextColor = (score: number) => {
             </div>
             <Progress value={skillsMatchPercentage} className="h-3" />
             <div className="text-xs text-muted-foreground">
-              {skillsMatch.matching} of {skillsMatch.total} required skills found
+              {skillsMatch.matching} of {skillsMatch.total} required Matched skills found 
             </div>
           </div>
         </CardContent>
