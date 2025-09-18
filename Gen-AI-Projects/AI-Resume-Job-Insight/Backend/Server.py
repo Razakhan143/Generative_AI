@@ -7,6 +7,85 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 import helper_function
 import uvicorn
+import json
+import uuid
+from typing import Dict, Any
+
+# -----------------------------------
+# Global Storage for Resume Data
+# -----------------------------------
+# In-memory storage for resume data (in production, use Redis or database)
+resume_storage: Dict[str, Dict[str, Any]] = {}
+user_sessions: Dict[str, str] = {}  # Maps session to resume_id
+
+def store_resume_data(resume_text: str, parsed_resume: Dict, original_filename: str = "") -> str:
+    """Store resume data and return a unique resume_id"""
+    resume_id = str(uuid.uuid4())
+    
+    resume_storage[resume_id] = {
+        "original_text": resume_text,
+        "parsed_data": parsed_resume,
+        "filename": original_filename,
+        "timestamp": datetime.now().isoformat(),
+        "personal_info": extract_personal_info_from_text(resume_text)
+    }
+    
+    print(f"✅ Stored resume data with ID: {resume_id}")
+    return resume_id
+
+def get_stored_resume_data(resume_id: str) -> Dict[str, Any]:
+    """Retrieve stored resume data by ID"""
+    return resume_storage.get(resume_id, {})
+
+def extract_personal_info_from_text(text: str) -> Dict[str, str]:
+    """Extract personal information from resume text"""
+    import re
+    
+    # Extract email addresses
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    emails = re.findall(email_pattern, text)
+    email = emails[0] if emails else ""
+    
+    # Extract phone numbers (various formats)
+    phone_patterns = [
+        r'\+?1?[-.\s]?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})',
+        r'\+?[0-9]{1,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4}',
+        r'\b\d{10}\b'
+    ]
+    phone = ""
+    for pattern in phone_patterns:
+        phone_matches = re.findall(pattern, text)
+        if phone_matches:
+            if isinstance(phone_matches[0], tuple):
+                phone = f"({phone_matches[0][0]}) {phone_matches[0][1]}-{phone_matches[0][2]}"
+            else:
+                phone = phone_matches[0]
+            break
+    
+    # Extract LinkedIn profile
+    linkedin_pattern = r'linkedin\.com/in/[\w-]+'
+    linkedin_matches = re.findall(linkedin_pattern, text)
+    linkedin = linkedin_matches[0] if linkedin_matches else ""
+    
+    # Extract name - try multiple approaches
+    name_patterns = [
+        r'^([A-Z][a-z]+ [A-Z][a-z]+)',  # First Last
+        r'([A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+)',  # First M. Last
+        r'([A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+)'  # First Middle Last
+    ]
+    name = ""
+    for pattern in name_patterns:
+        name_match = re.search(pattern, text)
+        if name_match:
+            name = name_match.group(1)
+            break
+    
+    return {
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "linkedin": linkedin
+    }
 
 # -----------------------------------
 # Create FastAPI app
@@ -226,20 +305,18 @@ async def process_resume(
             
             # Post-process the response to fix formatting issues
             if response and hasattr(response, 'get'):
-                print("✅ Raw response type:", type(response))
-                print("✅ Raw Interview Q&A:", response.get('Interview Q&A', 'Not found'))
-                
+            
                 # Fix Interview Q&A if it's in JSON format
                 if 'Interview Q&A' in response:
                     original_qa = response['Interview Q&A']
                     response['Interview Q&A'] = format_interview_qa(response['Interview Q&A'])
-                    print("✅ Formatted Interview Q&A from:", type(original_qa), "to string")
+                
                 
                 # Clean percentage values
                 if 'Match Percentage' in response:
                     original_percentage = response['Match Percentage']
                     response['Match Percentage'] = clean_percentage(response['Match Percentage'])
-                    print("✅ Cleaned percentage from:", original_percentage, "to:", response['Match Percentage'])
+
         except Exception as e:
             traceback.print_exc()
 
@@ -256,13 +333,24 @@ async def process_resume(
                 visualize_value['visual Match Percentage'] = clean_percentage(visualize_value['visual Match Percentage'])
     except Exception as e:
         traceback.print_exc()
-
+    # Clean up temporary file
+    print("All the data is passed to the frontend successfully.")
+    
+    # Store resume data for future use
+    resume_id = store_resume_data(
+        resume_text=resume_text,
+        parsed_resume=res_resume,
+        original_filename=resume.filename if resume else "unknown.pdf"
+    )
+    
     return {
         "success": True,
         "compare_response": response,
         "resume_text": res_resume,
         "job_description": res_jobdes,
         "analysis": visualize_value,
+        "resume_id": resume_id,  # Include resume_id for future reference
+        "personal_info": resume_storage[resume_id]["personal_info"]  # Include extracted personal info
     }
 
 # -----------------------------------
@@ -273,56 +361,121 @@ async def generate_resume(request: Request):
     """Generate improved resume based on feedback"""
     try:
         print("✅ API hit: /api/generate-resume")
+        body = await request.json()
+        print("="*50)
+        print("📥 Received Payload:", json.dumps(body, indent=2))
+        print("="*50)
+
+        resume_id = body.get("resume_id")
         
-        # Try to parse JSON data first
-        try:
-            body = await request.json()
-            print("✅ Received JSON data:", body)
-            
-            # Extract the data properly from JSON structure
-            feedback_data = {
-                "improvements": body.get("improvements", ""),
-                "ats_keywords": body.get("atsKeywords", ""),
-                "analysis": body.get("analysis", {}),
-                "job_description": body.get("jobDescription", {})
+        # 1. Consolidate all available data into a single dictionary
+        final_resume_data = {}
+        
+        # Start with the base resume text from the frontend
+        if isinstance(body.get("resumeText"), dict):
+            final_resume_data.update(body.get("resumeText"))
+
+        # Get stored data and merge it carefully
+        if resume_id:
+            stored_data = get_stored_resume_data(resume_id)
+            if stored_data:
+                # Merge parsed data from storage
+                if isinstance(stored_data.get("parsed_data"), dict):
+                    final_resume_data.update(stored_data.get("parsed_data"))
+                # Overwrite with more reliable personal info from initial extraction
+                if isinstance(stored_data.get("personal_info"), dict):
+                    final_resume_data.update(stored_data.get("personal_info"))
+                    # Ensure "Name" is set from personal_info if available
+                    if stored_data["personal_info"].get("name"):
+                         final_resume_data["Name"] = stored_data["personal_info"]["name"]
+
+        # Ensure a clean contact info string is created
+        contact_parts = []
+        if final_resume_data.get("email"):
+            contact_parts.append(f"Email: {final_resume_data['email']}")
+        if final_resume_data.get("phone"):
+            contact_parts.append(f"Phone: {final_resume_data['phone']}")
+        if final_resume_data.get("linkedin"):
+            contact_parts.append(f"LinkedIn: {final_resume_data['linkedin']}")
+        final_resume_data["Contact Info"] = " | ".join(contact_parts)
+
+        # 2. Prepare for LLM call (if needed, but for now we focus on PDF generation)
+        # For now, we will use the consolidated data directly.
+        # This helps verify the PDF generation step independently.
+        
+        # In a real scenario, you would call the LLM here to get `output_resume`
+        # model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+        # resume_parser, resume_prompt = helper_function.generate_resume_from_feedback(feedback_data, final_resume_data)
+        # output_resume = (model | resume_parser).invoke(resume_prompt)
+        
+        # For debugging, we use the merged data as the final output
+        output_resume = final_resume_data
+        
+
+
+        # 3. Create PDF
+        resume_name = output_resume.get("Name", "Generated_Resume").replace(" ", "_")
+        pdf_success, pdf_data = helper_function.create_resume_pdf(output_resume, file_name=f"{resume_name}.pdf")
+        
+        if pdf_success:
+            print("✅ PDF created successfully")
+            return {
+                "success": True, 
+                "generated_resume": output_resume, # Sending back the data used for the PDF
+                "improved_resume": format_resume_as_text(output_resume),
+                "pdf_base64": pdf_data,
+                "filename": f"{resume_name}.pdf"
+            }
+        else:
+            print("❌ PDF creation failed:", pdf_data)
+            return {
+                "success": False,
+                "error": "PDF generation failed.",
+                "details": pdf_data
             }
             
-            candidate_info = body.get("resumeText", {})
-            name = body.get("name", "Generated_Resume")
-            
-        except Exception as json_error:
-            print("❌ JSON parsing failed, trying form data:", json_error)
-            # Fallback to form data
-            form = await request.form()
-            feedback_data = form.get("response", "")
-            candidate_info = form.get("resume_text", "")
-            name = form.get("name", "Generated_Resume")
-        
-        model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-        resume_parser, resume_prompt = helper_function.generate_resume_from_feedback(feedback_data, candidate_info)
-        output_resume = (model | resume_parser).invoke(resume_prompt)
-        
-        print("✅ Generated resume type:", type(output_resume))
-        print("✅ Generated resume keys:", output_resume.keys() if hasattr(output_resume, 'keys') else 'No keys')
-        print("✅ Generated resume sample:", str(output_resume)[:200])
-
-        # Format the resume as a readable string for the frontend
-        formatted_resume = format_resume_as_text(output_resume)
-        print("✅ Formatted resume type:", type(formatted_resume))
-        print("✅ Formatted resume sample:", formatted_resume[:200])
-        
-        name = name.replace(" ", "_")
-        success = helper_function.create_resume_pdf(output_resume, file_name=f"{name}.pdf")
-
-        return {
-            "success": True, 
-            "generated_resume": output_resume,
-            "improved_resume": formatted_resume,  # Frontend expects this as formatted text
-            "filename": f"{name}.pdf"
-        }
     except Exception as e:
         traceback.print_exc()
         return {"success": False, "error": str(e)}
+
+# -----------------------------------
+# Debug endpoints to check stored resume data
+# -----------------------------------
+@app.get("/api/debug/resume/{resume_id}")
+async def debug_resume(resume_id: str):
+    """Debug endpoint to check stored resume data"""
+    stored_data = get_stored_resume_data(resume_id)
+    if stored_data:
+        return {
+            "success": True,
+            "resume_id": resume_id,
+            "stored_data": stored_data,
+            "personal_info": stored_data.get("personal_info", {}),
+            "timestamp": stored_data.get("timestamp", "")
+        }
+    else:
+        return {
+            "success": False,
+            "error": f"No resume data found for ID: {resume_id}"
+        }
+
+@app.get("/api/debug/storage")
+async def debug_storage():
+    """Debug endpoint to check all stored resume data"""
+    return {
+        "success": True,
+        "total_stored": len(resume_storage),
+        "resume_ids": list(resume_storage.keys()),
+        "storage_summary": {
+            resume_id: {
+                "filename": data.get("filename", ""),
+                "timestamp": data.get("timestamp", ""),
+                "has_personal_info": bool(data.get("personal_info", {})),
+                "personal_info": data.get("personal_info", {})
+            }
+            for resume_id, data in resume_storage.items()
+        }
+    }
 
 # -----------------------------------
 # Run FastAPI application
@@ -330,9 +483,8 @@ async def generate_resume(request: Request):
 if __name__ == "__main__":
     import os
     print("🚀 Starting Resume Processing API...")
-    print("📄 API Documentation available at: http://localhost:8502/docs")
-    print("🔍 Interactive API explorer at: http://localhost:8502/redoc")
+    print("📄 API Documentation available at: http://localhost:8503/docs")
+    print("🔍 Interactive API explorer at: http://localhost:8503/redoc")
     
     # Update the main block:
-    port = int(os.environ.get("PORT", 8502))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8503)

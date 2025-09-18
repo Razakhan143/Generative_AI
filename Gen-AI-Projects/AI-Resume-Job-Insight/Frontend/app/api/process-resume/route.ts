@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
 
     // Send data directly to FastAPI backend API
     const backendUrl = process.env.backendUrl || "https://generativeai-production.up.railway.app/"
-        // const backendUrl = process.env.FASTAPI_BACKEND_URL || "http://localhost:8502/";
+        // const backendUrl = process.env.FASTAPI_BACKEND_URL || "http://localhost:8503/";
     console.log("🚀 Forwarding request to FastAPI backend...")
 
     // Forward the entire form data to FastAPI backend
@@ -22,12 +22,11 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await response.json()
-    console.log("✅ Data successfully sent to Streamlit backend")
-    console.log("📋 Check your Streamlit terminal for the printed data!")
-    
+    console.log("✅ Data successfully sent to Fastapi backend")
+    console.log("📋 Check your Fastapi terminal for the printed data!")
     return NextResponse.json(result)
   } catch (error) {
-    console.error("Error communicating with Streamlit backend:", error)
+    console.error("Error communicating with Fastapi backend:", error)
     return NextResponse.json(
       {
         success: false,

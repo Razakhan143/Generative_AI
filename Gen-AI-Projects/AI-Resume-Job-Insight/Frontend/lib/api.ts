@@ -65,12 +65,11 @@ export async function processResume(
       method: "POST",
       body: formData,
     })
-
+    const datares = await response.json()
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
-
-    return await response.json()
+    return datares
   } catch (error) {
     console.error("Error processing resume:", error)
     return {

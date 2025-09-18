@@ -11,6 +11,8 @@ import { Briefcase, User, TrendingUp } from "lucide-react"
 import { FileUpload } from "@/components/file-upload"
 import { MatchResults } from "@/components/match-results"
 import { processResume, ProcessResumeResponse } from "@/lib/api"
+import { db } from "@/lib/firebase"
+import { collection, addDoc, serverTimestamp } from "firebase/firestore"
 
 interface AnalysisResult {
   analysis: {
@@ -55,6 +57,19 @@ interface AnalysisResult {
     workExperience: string
     yearOfExperience?: string
   }
+  resume_id :{
+    Name: string
+    Email: string
+    Phone: string
+    LinkedIn: string
+    skills: string
+    workExperience: string
+    projects: string
+    education: string
+    certificates: string
+    experienceLevel: string
+  }
+
   success: boolean
 }
 
@@ -68,8 +83,25 @@ export function ResumeJobMatcher() {
   const [error, setError] = useState<string | null>(null)
   const [selectedServer, setSelectedServer] = useState<"server1" | "server2" | "server3">("server2")
 
+ const saveToFirestore = async (data: AnalysisResult) => {
+    try {
+      await addDoc(collection(db, "resumeJobMatches"), {
+        resume_id: data.resume_id,
+        Server: selectedServer,
+        analysis: data.analysis,
+        jobDescription: data.jobDescription,
+        success: data.success,
+        timestamp: serverTimestamp(),
+      })
+      // console.log("Data to be saved:", data)  // Debug log
+      console.log("Data successfully stored in Firestore")
+    } catch (err) {
+      console.error("Error saving to Firestore:", err)
+    }
+  }
+
+
   const transformApiResult = (result: any): AnalysisResult => {
-    console.log("Raw API Result:", result)
     
     return {
       analysis: {
@@ -123,6 +155,18 @@ export function ResumeJobMatcher() {
         workExperience: result.resume_text?.["Work Experience"] || "",
         yearOfExperience: result.resume_text?.["Year of Experience"] || result.analysis?.["Candidate Experience (years)"] || ""
       },
+      resume_id: {
+        Name: result.resume_text?.["Name"] || "",
+        Email: result.resume_text?.["Email"] || "",
+        Phone: result.resume_text?.["Phone"] || "",
+        LinkedIn: result.resume_text?.["LinkedIn"] || "",
+        skills: result.resume_text?.["Skills"] || "",
+        workExperience: result.resume_text?.["Work Experience"] || "",
+        projects: result.resume_text?.["Projects"] || "",
+        education: result.resume_text?.["Education"] || "",
+        certificates: result.resume_text?.["Certificates"] || "",
+        experienceLevel: result.resume_text?.["Experience Level"] || ""
+      },
       success: result.success || false
     }
   }
@@ -143,10 +187,13 @@ export function ResumeJobMatcher() {
         jobUrl || undefined,
         selectedServer
       )
-      console.log("API Result:", result)
       if (result.success) {
         const transformedResult = transformApiResult(result)
         setAnalysisResult(transformedResult)
+        
+        // 🔥 Save to Firebase
+         await saveToFirestore(transformedResult)   
+        console.log("Data saved to Firestore")  
       } else {
         throw new Error(result.error || "Analysis failed")
       }

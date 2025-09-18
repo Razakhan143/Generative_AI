@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Upload, FileText, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
+
+
 interface FileUploadProps {
-  onFileSelect: (file: File | null) => void
+  onFileSelect: (file: File | null, url?: string) => void
   selectedFile: File | null
   accept?: string
   maxSize?: number
@@ -20,10 +22,17 @@ export function FileUpload({
   accept = ".pdf,.docx",
   maxSize = 10 * 1024 * 1024,
 }: FileUploadProps) {
+
+  // Just select the file, no upload
+  const handleFileSelect = (file: File) => {
+    onFileSelect(file)
+  }
+
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
-        onFileSelect(acceptedFiles[0])
+        const file = acceptedFiles[0]
+        handleFileSelect(file)
       }
     },
     [onFileSelect],
@@ -51,7 +60,9 @@ export function FileUpload({
             <FileText className="h-8 w-8 text-primary" />
             <div>
               <p className="font-medium text-sm">{selectedFile.name}</p>
-              <p className="text-xs text-muted-foreground">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+              <p className="text-xs text-muted-foreground">
+                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+              </p>
             </div>
           </div>
           <Button
@@ -90,7 +101,9 @@ export function FileUpload({
         <div className="space-y-2">
           <p className="text-foreground font-medium">Drag and drop your resume here</p>
           <p className="text-sm text-muted-foreground">or click to browse files</p>
-          <p className="text-xs text-muted-foreground">Supports PDF and DOCX files up to {maxSize / 1024 / 1024}MB</p>
+          <p className="text-xs text-muted-foreground">
+            Supports PDF and DOCX files up to {maxSize / 1024 / 1024}MB
+          </p>
         </div>
       )}
     </div>
