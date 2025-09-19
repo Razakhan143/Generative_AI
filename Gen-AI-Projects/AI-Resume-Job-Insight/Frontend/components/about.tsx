@@ -90,8 +90,9 @@ export function About() {
   }
 
   const skills = [
-    "React", "Next.js", "TypeScript", "Python", "AI/ML", "Firebase", 
-    "Node.js", "TailwindCSS", "Streamlit", "Data Science", "LLMs", "Full-Stack Development"
+     "Python", "AI/ML", "Web Development", "Streamlit", "Data Science",
+      "LLMs", "NLP", "APIs", "AWS", "ML/DL", "Computer Vision", "Flask",
+      "FastAPI", "GenAI", "AI Engineer", "Next.js","Data Scientest"
   ]
 
   return (
@@ -122,13 +123,13 @@ export function About() {
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">RAZA KHAN</h2>
-                  <p className="text-muted-foreground">Full-Stack Developer & AI Enthusiast</p>
+                  <p className="text-muted-foreground">Data Scientist and AI Engineer</p>
                 </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-foreground leading-relaxed">
-                Welcome to AI Resume-Job Insight! I'm Raza Khan, a passionate full-stack developer 
+                Welcome to AI Resume-Job Insight! I'm Raza Khan, a passionate Data Scientist and AI Engineer
                 specializing in AI-powered applications. This platform combines cutting-edge artificial 
                 intelligence with intuitive user experience to help job seekers optimize their resumes 
                 and improve their chances of landing their dream jobs.
@@ -159,19 +160,19 @@ export function About() {
                 </h3>
                 <div className="flex gap-4">
                   <Button variant="outline" size="sm" asChild>
-                    <a href="mailto:razakhan@example.com" className="flex items-center gap-2">
+                    <a href="mailto:razakhanzada100@gmail.com" className="flex items-center gap-2">
                       <Mail className="h-4 w-4" />
                       Email
                     </a>
                   </Button>
                   <Button variant="outline" size="sm" asChild>
-                    <a href="https://linkedin.com/in/razakhan" target="_blank" className="flex items-center gap-2">
+                    <a href="https://www.linkedin.com/in/raza-khan-922612296/" target="_blank" className="flex items-center gap-2">
                       <Linkedin className="h-4 w-4" />
                       LinkedIn
                     </a>
                   </Button>
                   <Button variant="outline" size="sm" asChild>
-                    <a href="https://github.com/razakhan" target="_blank" className="flex items-center gap-2">
+                    <a href="https://github.com/Razakhan143" target="_blank" className="flex items-center gap-2">
                       <Github className="h-4 w-4" />
                       GitHub
                     </a>
@@ -300,7 +301,7 @@ export function About() {
           <Card className="mt-6">
             <CardContent className="pt-6">
               <div className="text-center space-y-2">
-                <h3 className="font-semibold">Built with ❤️ by Raza Khan</h3>
+                <h3 className="font-semibold">Developed by Raza Khan</h3>
                 <p className="text-sm text-muted-foreground">
                   Empowering job seekers with AI-driven insights
                 </p>

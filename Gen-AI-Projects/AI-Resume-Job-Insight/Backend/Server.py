@@ -42,7 +42,6 @@ def safe_gemini_call_with_auto_restart(model, parser, prompt, timeout_seconds=60
                 print("="*50)
                 print("✅ Gemini response received.", result)
                 print("="*50)
-                
                 restart_timer.cancel()
                 return result, None
             except TimeoutError:
