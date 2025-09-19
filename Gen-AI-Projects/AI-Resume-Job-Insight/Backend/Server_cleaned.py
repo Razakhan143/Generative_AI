@@ -1,12 +1,14 @@
 import os
-import uvicorn
-import traceback
+import sys
 import threading
 import time
+import uvicorn
+import uuid
+import traceback
 from datetime import datetime
-from fastapi import FastAPI, UploadFile, Form, Request
 from typing import Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from fastapi import FastAPI, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_google_genai import GoogleGenerativeAI
 from dotenv import load_dotenv
@@ -35,14 +37,8 @@ def safe_gemini_call_with_auto_restart(model, parser, prompt, timeout_seconds=60
         # Execute with executor timeout
         with ThreadPoolExecutor() as executor:
             future = executor.submit(parser.parse, model.invoke(prompt))
-            print("⏳ Waiting for Gemini response...")
-
             try:
                 result = future.result(timeout=timeout_seconds-5)  # 5s buffer
-                print("="*50)
-                print("✅ Gemini response received.", result)
-                print("="*50)
-                
                 restart_timer.cancel()
                 return result, None
             except TimeoutError:
@@ -57,48 +53,16 @@ def safe_gemini_call_with_auto_restart(model, parser, prompt, timeout_seconds=60
         error_message = str(e).lower()
         print(f"❌ Error in Gemini call: {e}")
         
-        # Check for JSON parsing errors (empty response, invalid JSON)
-        if ("invalid json" in error_message or 
-            "expecting value" in error_message or 
-            "json.decoder.jsondecodererror" in error_message or
-            "char 0" in error_message):
-            print("🔍 JSON parsing error detected - likely empty or malformed API response")
-            print("🔄 Returning error to frontend for server switching instead of auto-restart")
-            # Cancel any pending restart timer since we're handling this gracefully
-            if restart_timer and restart_timer.is_alive():
-                restart_timer.cancel()
-                print("⏹️ Cancelled auto-restart timer - letting frontend handle server switch")
-            return None, {
-                "error_type": "api_response_error",
-                "message": "API returned invalid response. This may indicate quota limits or API issues.",
-                "original_error": str(e),
-                "auto_restart": True,
-                "restart_reason": "invalid_response",
-                "server_switch_recommended": True,
-                "alternative_servers": ["gemini-2.5-flash", "gemini-2.0-flash"],
-                "estimated_restart_time": "30 seconds",
-                "suggestion": "Please switch to a different server. This error typically indicates quota limits."
-            }
-        
-        # Check for quota/rate limit errors
-        if ("quota" in error_message or "limit" in error_message or "resource" in error_message or
-            "rate limit" in error_message or "too many requests" in error_message):
-            print("🚨 Quota/rate limit error detected")
-            print("🔄 Returning error to frontend for server switching")
-            # Cancel any pending restart timer since we're handling this gracefully
-            if restart_timer and restart_timer.is_alive():
-                restart_timer.cancel()
-                print("⏹️ Cancelled auto-restart timer - letting frontend handle server switch")
+        if "quota" in error_message or "limit" in error_message or "resource" in error_message:
             return None, {
                 "error_type": "quota_exceeded",
-                "message": "Server quota exceeded. Please switch to a different server.",
+                "message": "Server quota exceeded. Auto-restarting... try to select different server",
                 "original_error": str(e),
                 "auto_restart": True,
                 "restart_reason": "quota_exceeded",
                 "server_switch_recommended": True,
                 "alternative_servers": ["gemini-2.5-flash", "gemini-2.0-flash"],
-                "estimated_restart_time": "30 seconds",
-                "suggestion": "Please switch to a different server. The current server has reached its quota limit."
+                "estimated_restart_time": "30 seconds"
             }
         else:
             return None, {
@@ -106,6 +70,88 @@ def safe_gemini_call_with_auto_restart(model, parser, prompt, timeout_seconds=60
                 "message": str(e),
                 "original_error": str(e)
             }
+
+# -----------------------------------
+# Personal Info Extraction
+# -----------------------------------
+def extract_personal_info_from_text(text: str) -> Dict[str, str]:
+    """Extract basic personal information from resume text"""
+    personal_info = {}
+    
+    # Extract email
+    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+    email_match = re.search(email_pattern, text)
+    if email_match:
+        personal_info['email'] = email_match.group()
+    
+    # Extract phone (basic patterns)
+    phone_pattern = r'[\+]?[1-9]?[0-9]{7,15}'
+    phone_match = re.search(phone_pattern, text.replace('-', '').replace(' ', ''))
+    if phone_match:
+        personal_info['phone'] = phone_match.group()
+    
+    # Extract LinkedIn
+    linkedin_pattern = r'linkedin\.com/in/[\w-]+'
+    linkedin_match = re.search(linkedin_pattern, text.lower())
+    if linkedin_match:
+        personal_info['linkedin'] = f"https://{linkedin_match.group()}"
+    
+    return personal_info
+
+# -----------------------------------
+# Global Storage for Resume Data
+# -----------------------------------
+resume_storage: Dict[str, Dict[str, Any]] = {}
+user_sessions: Dict[str, str] = {}
+
+def store_resume_data(resume_text: str, parsed_resume: Dict, original_filename: str = "") -> str:
+    """Store resume data and return a unique resume_id"""
+    resume_id = str(uuid.uuid4())
+    
+    resume_storage[resume_id] = {
+        "original_text": resume_text,
+        "parsed_data": parsed_resume,
+        "filename": original_filename,
+        "timestamp": datetime.now().isoformat(),
+        "personal_info": extract_personal_info_from_text(resume_text)
+    }
+    
+    return resume_id
+
+def get_stored_resume_data(resume_id: str) -> Dict[str, Any]:
+    """Retrieve stored resume data by ID"""
+    return resume_storage.get(resume_id, {})
+
+# -----------------------------------
+# Utility Functions
+# -----------------------------------
+def format_interview_qa(qa_data):
+    """Convert Interview Q&A from various formats to the expected string format"""
+    if isinstance(qa_data, str):
+        return qa_data
+    
+    if isinstance(qa_data, dict):
+        formatted_qa = ""
+        for i, (question, answer) in enumerate(qa_data.items(), 1):
+            clean_question = question
+            if ':' in question:
+                clean_question = question.split(':', 1)[1].strip()
+            
+            clean_answer = str(answer)
+            if clean_answer.startswith(('A1:', 'A2:', 'A3:', 'A4:', 'A5:')):
+                clean_answer = clean_answer.split(':', 1)[1].strip()
+            
+            formatted_qa += f"**Q: {clean_question}**\n\n**A: {clean_answer}**\n\n"
+        
+        return formatted_qa.strip()
+    
+    return "No interview questions available."
+
+def clean_percentage(percentage_value):
+    """Clean percentage values to ensure they're just numbers"""
+    if isinstance(percentage_value, str):
+        return percentage_value.replace('%', '').strip()
+    return percentage_value
 
 # -----------------------------------
 # FastAPI Application Setup
@@ -233,15 +279,8 @@ async def process_resume(
         else:
             return {"success": False, "error": error["message"]}
 
-    # Add small delay to avoid rate limiting
-    print("⏳ Adding 2-second delay to avoid rate limiting...")
-    time.sleep(2)
-
     # Parse job description
-    print("🔄 Starting job description parsing...")
-
     parser_jobdes, jobdes_prompt = helper_function.job_description(job_description)
-    print(f"📝 proceeding after job parser")
     res_jobdes, error = safe_gemini_call_with_auto_restart(model, parser_jobdes, jobdes_prompt)
     
     if error:
@@ -260,17 +299,12 @@ async def process_resume(
         else:
             return {"success": False, "error": error["message"]}
 
-    # Add small delay to avoid rate limiting  
-    print("⏳ Adding 2-second delay before main comparison...")
-    time.sleep(2)
-
     # Main comparison
     response = None
     try:
         if res_resume and res_jobdes:
-            print("🔄 Starting main comparison analysis...")
             parser_main, main_prompt = helper_function.comparing(res_resume, res_jobdes)
-            response, error = safe_gemini_call_with_auto_restart(model, parser_main, main_prompt, timeout_seconds=100)
+            response, error = safe_gemini_call_with_auto_restart(model, parser_main, main_prompt)
             
             if error:
                 if error.get("auto_restart"):
@@ -291,23 +325,18 @@ async def process_resume(
             if response:
                 # Format Interview Q&A
                 if 'Interview Q&A' in response:
-                    response['Interview Q&A'] = helper_function.format_interview_qa(response['Interview Q&A'])
+                    response['Interview Q&A'] = format_interview_qa(response['Interview Q&A'])
                 
                 # Clean percentage values
                 if 'Match Percentage' in response:
-                    response['Match Percentage'] = helper_function.clean_percentage(response['Match Percentage'])
+                    response['Match Percentage'] = clean_percentage(response['Match Percentage'])
 
     except Exception as e:
         traceback.print_exc()
 
-    # Add small delay to avoid rate limiting
-    print("⏳ Adding 2-second delay before visualization...")
-    time.sleep(2)
-
     # Visualization
     visualize_value = None
     try:
-        print("🔄 Starting visualization data generation...")
         parser_visual, visual_prompt = helper_function.visualize_data(res_resume, res_jobdes)
         visualize_value, error = safe_gemini_call_with_auto_restart(model, parser_visual, visual_prompt)
         
@@ -329,12 +358,12 @@ async def process_resume(
         else:
             if visualize_value and hasattr(visualize_value, 'get'):
                 if 'visual Match Percentage' in visualize_value:
-                    visualize_value['visual Match Percentage'] = helper_function.clean_percentage(visualize_value['visual Match Percentage'])
+                    visualize_value['visual Match Percentage'] = clean_percentage(visualize_value['visual Match Percentage'])
     except Exception as e:
         traceback.print_exc()
     
     # Store resume data
-    resume_id = helper_function.store_resume_data(
+    resume_id = store_resume_data(
         resume_text=resume_text,
         parsed_resume=res_resume,
         original_filename=resume.filename if resume else ""
@@ -359,7 +388,7 @@ async def generate_resume(
     if not resume_id:
         return {"success": False, "error": "Resume ID is required"}
 
-    stored_data = helper_function.get_stored_resume_data(resume_id)
+    stored_data = get_stored_resume_data(resume_id)
     if not stored_data:
         return {"success": False, "error": "Resume data not found"}
 

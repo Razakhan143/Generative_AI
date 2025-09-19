@@ -1,13 +1,15 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Briefcase, User, TrendingUp } from "lucide-react"
+import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { Briefcase, User, TrendingUp, Heart, MessageSquare } from "lucide-react"
 import { FileUpload } from "@/components/file-upload"
 import { MatchResults } from "@/components/match-results"
 import { processResume, ProcessResumeResponse } from "@/lib/api"
@@ -82,6 +84,13 @@ export function ResumeJobMatcher() {
   const [inputMethod, setInputMethod] = useState<"text" | "url">("text")
   const [error, setError] = useState<string | null>(null)
   const [selectedServer, setSelectedServer] = useState<"server1" | "server2" | "server3">("server2")
+  const [showThankYouDialog, setShowThankYouDialog] = useState(false)
+  const [showQuotaExceededDialog, setShowQuotaExceededDialog] = useState(false)
+  const [quotaErrorInfo, setQuotaErrorInfo] = useState<{
+    serverRestarted?: boolean
+    selectedServer?: string
+    message?: string
+  }>({})
 
  const saveToFirestore = async (data: AnalysisResult) => {
     try {
@@ -102,70 +111,74 @@ export function ResumeJobMatcher() {
 
 
   const transformApiResult = (result: any): AnalysisResult => {
+    // Backend returns: resume_data, job_data, comparison_result, visualization_data
+    // Map to frontend expected structure
+    console.log('🔍 Backend response structure:', result);
     
     return {
       analysis: {
-        candidateExperience: result.analysis?.["visual Candidate Experience (years)"] || 
-                           result.analysis?.["Candidate Experience (years)"] || "1.67",
-        confidenceScores: result.analysis?.["visual Confidence scores"] || 
-                         result.analysis?.["Confidence scores"] || "{}",
-        jobSkills: result.analysis?.["visual Job Skills"] || 
-                  result.analysis?.["Job Skills"] || "",
-        matchPercentage: result.analysis?.["visual Match Percentage"] || 
-                        result.analysis?.["Match Percentage"] || "60",
-        missingWeakSkills: result.analysis?.["visual Missing / Weak Skills"] || 
-                          result.analysis?.["Missing / Weak Skills"] || "",
-        requiredExperience: result.analysis?.["visual Required Experience (years)"] || 
-                           result.analysis?.["Required Experience (years)"] || 
-                           result.job_description?.["Year of Experience"] || "0.0",
-        resumeSections: result.analysis?.["visual Resume Sections"] || 
-                       result.analysis?.["Resume Sections"] || "{}",
-        resumeSkills: result.analysis?.["visual Resume Skills"] || 
-                     result.analysis?.["Resume Skills"] || ""
+        candidateExperience: result.visualization_data?.["visual Candidate Experience (years)"] || 
+                           result.visualization_data?.["Candidate Experience (years)"] || "1.67",
+        confidenceScores: result.visualization_data?.["visual Confidence scores"] || 
+                         result.visualization_data?.["Confidence scores"] || "{}",
+        jobSkills: result.visualization_data?.["visual Job Skills"] || 
+                  result.visualization_data?.["Job Skills"] || "",
+        matchPercentage: result.visualization_data?.["visual Match Percentage"] || 
+                        result.visualization_data?.["Match Percentage"] || "60",
+        missingWeakSkills: result.visualization_data?.["visual Missing / Weak Skills"] || 
+                          result.visualization_data?.["Missing / Weak Skills"] || "",
+        requiredExperience: result.visualization_data?.["visual Required Experience (years)"] || 
+                           result.visualization_data?.["Required Experience (years)"] || 
+                           result.job_data?.["Year of Experience"] || "0.0",
+        resumeSections: result.visualization_data?.["visual Resume Sections"] || 
+                       result.visualization_data?.["Resume Sections"] || "{}",
+        resumeSkills: result.visualization_data?.["visual Resume Skills"] || 
+                     result.visualization_data?.["Resume Skills"] || ""
       },
       compareResponse: {
-        atsOptimizedKeywordList: result.compare_response?.["ATS-optimized keyword list"] || "",
-        confidenceScores: result.compare_response?.["Confidence scores"] || "",
-        interviewQA: result.compare_response?.["Interview Q&A"] || "",
-        matchPercentage: result.compare_response?.["Match Percentage"] || "60%",
-        missingWeakSkills: result.compare_response?.["Missing / Weak Skills"] || "",
-        suggestedRewrites: result.compare_response?.["Suggested rewrites"] || ""
+        atsOptimizedKeywordList: result.comparison_result?.["ATS-optimized keyword list"] || "",
+        confidenceScores: result.comparison_result?.["Confidence scores"] || "",
+        interviewQA: result.comparison_result?.["Interview Q&A"] || "",
+        matchPercentage: result.comparison_result?.["Match Percentage"] || "60%",
+        missingWeakSkills: result.comparison_result?.["Missing Skills"] || 
+                          result.comparison_result?.["Missing / Weak Skills"] || "",
+        suggestedRewrites: result.comparison_result?.["Suggested rewrites"] || ""
       },
       jobDescription: {
-        employmentType: result.job_description?.["Employment Type"] || "",
-        experienceLevel: result.job_description?.["Experience Level"] || "",
-        jobTitle: result.job_description?.["Job Title"] || "",
-        qualifications: result.job_description?.["Qualifications"] || "",
-        requiredSkills: result.job_description?.["Required Skills"] || "",
-        responsibilities: result.job_description?.["Responsibilities"] || "",
-        yearOfExperience: result.job_description?.["Year of Experience"] || ""
+        employmentType: result.job_data?.["Employment Type"] || "",
+        experienceLevel: result.job_data?.["Experience Level"] || "",
+        jobTitle: result.job_data?.["Job Title"] || "",
+        qualifications: result.job_data?.["Qualifications"] || "",
+        requiredSkills: result.job_data?.["Required Skills"] || "",
+        responsibilities: result.job_data?.["Responsibilities"] || "",
+        yearOfExperience: result.job_data?.["Year of Experience"] || ""
       },
       resumeText: {
-        name: result.resume_text?.["Name"] || "",
-        email: result.resume_text?.["Email"] || "",
-        phone: result.resume_text?.["Phone"] || "",
-        linkedin: result.resume_text?.["LinkedIn"] || "",
-        github: result.resume_text?.["GitHub"] || "",
-        achievements: result.resume_text?.["Achievements"] || "",
-        certificates: result.resume_text?.["Certificates"] || "",
-        education: result.resume_text?.["Education"] || "",
-        experienceLevel: result.resume_text?.["Experience Level"] || "",
-        projects: result.resume_text?.["Projects"] || "",
-        skills: result.resume_text?.["Skills"] || "",
-        workExperience: result.resume_text?.["Work Experience"] || "",
-        yearOfExperience: result.resume_text?.["Year of Experience"] || result.analysis?.["Candidate Experience (years)"] || ""
+        name: result.resume_data?.["Name"] || "",
+        email: result.resume_data?.["Email"] || "",
+        phone: result.resume_data?.["Phone"] || "",
+        linkedin: result.resume_data?.["LinkedIn"] || "",
+        github: result.resume_data?.["GitHub"] || "",
+        achievements: result.resume_data?.["Achievements"] || "",
+        certificates: result.resume_data?.["Certificates"] || "",
+        education: result.resume_data?.["Education"] || "",
+        experienceLevel: result.resume_data?.["Experience Level"] || "",
+        projects: result.resume_data?.["Projects"] || "",
+        skills: result.resume_data?.["Skills"] || "",
+        workExperience: result.resume_data?.["Work Experience"] || "",
+        yearOfExperience: result.resume_data?.["Year of Experience"] || result.visualization_data?.["Candidate Experience (years)"] || ""
       },
       resume_id: {
-        Name: result.resume_text?.["Name"] || "",
-        Email: result.resume_text?.["Email"] || "",
-        Phone: result.resume_text?.["Phone"] || "",
-        LinkedIn: result.resume_text?.["LinkedIn"] || "",
-        skills: result.resume_text?.["Skills"] || "",
-        workExperience: result.resume_text?.["Work Experience"] || "",
-        projects: result.resume_text?.["Projects"] || "",
-        education: result.resume_text?.["Education"] || "",
-        certificates: result.resume_text?.["Certificates"] || "",
-        experienceLevel: result.resume_text?.["Experience Level"] || ""
+        Name: result.resume_data?.["Name"] || "",
+        Email: result.resume_data?.["Email"] || "",
+        Phone: result.resume_data?.["Phone"] || "",
+        LinkedIn: result.resume_data?.["LinkedIn"] || "",
+        skills: result.resume_data?.["Skills"] || "",
+        workExperience: result.resume_data?.["Work Experience"] || "",
+        projects: result.resume_data?.["Projects"] || "",
+        education: result.resume_data?.["Education"] || "",
+        certificates: result.resume_data?.["Certificates"] || "",
+        experienceLevel: result.resume_data?.["Experience Level"] || ""
       },
       success: result.success || false
     }
@@ -187,21 +200,82 @@ export function ResumeJobMatcher() {
         jobUrl || undefined,
         selectedServer
       )
+      
+      console.log('🔍 Full API response:', result);
+      console.log('✅ Response success status:', result.success);
+      console.log('📊 Resume data keys:', result.resume_data ? Object.keys(result.resume_data) : 'No resume_data');
+      console.log('💼 Job data keys:', result.job_data ? Object.keys(result.job_data) : 'No job_data');
+      console.log('🎯 Comparison result keys:', result.comparison_result ? Object.keys(result.comparison_result) : 'No comparison_result');
+      console.log('📈 Visualization data keys:', result.visualization_data ? Object.keys(result.visualization_data) : 'No visualization_data');
+      
       if (result.success) {
+        console.log('🚀 Starting data transformation...');
         const transformedResult = transformApiResult(result)
+        console.log('✨ Transformed result:', transformedResult);
         setAnalysisResult(transformedResult)
         
         // 🔥 Save to Firebase
          await saveToFirestore(transformedResult)   
-        console.log("Data saved to Firestore")  
+        console.log("Data saved to Firestore")
+        
+        // Show thank you dialog after successful analysis
+        setShowThankYouDialog(true)
       } else {
+        // Check if result has quota exceeded information
+        if (result.quotaExceeded) {
+          console.log(`🚨 Quota exceeded for ${result.selectedServer}`)
+          if (result.serverRestarted) {
+            console.log("✅ Backend server has been restarted")
+          }
+          setShowQuotaExceededDialog(true)
+          return
+        }
+        
+        // Check for validation errors (like empty job description)
+        if (result.error_type === "validation_error") {
+          setError(result.error || "Please provide a valid job description")
+          return
+        }
+        
         throw new Error(result.error || "Analysis failed")
       }
     } catch (err) {
-      if (err instanceof Error && err.message.includes("Failed to communicate")) {
+      // Handle fetch errors and API response errors
+      let errorData: any = null
+      let errorMessage = "An error occurred during analysis"
+      
+      if (err instanceof Error) {
+        errorMessage = err.message
+        
+        // Try to parse error as JSON in case it contains structured error info
+        try {
+          if (err.message.includes('{')) {
+            const jsonStart = err.message.indexOf('{')
+            const jsonStr = err.message.substring(jsonStart)
+            errorData = JSON.parse(jsonStr)
+          }
+        } catch {
+          // Not JSON, continue with regular error handling
+        }
+      }
+      
+      // Check for quota exceeded errors (both in message and structured data)
+      const isQuotaError = 
+        errorMessage.includes("Quota exceeded") || 
+        errorMessage.includes("You exceeded your current quota") ||
+        errorMessage.includes("generativelanguage.googleapis.com/generate_content_free_tier_requests") ||
+        (errorData && errorData.quotaExceeded)
+      
+      if (isQuotaError) {
+        console.log("🚨 Quota exceeded error detected")
+        if (errorData && errorData.serverRestarted) {
+          console.log("✅ Backend server restart was attempted")
+        }
+        setShowQuotaExceededDialog(true)
+      } else if (errorMessage.includes("Failed to communicate")) {
         setError("Backend service unavailable. Please ensure the Streamlit backend is running on port 8501.")
       } else {
-        setError(err instanceof Error ? err.message : "An error occurred during analysis")
+        setError(errorMessage)
       }
     } finally {
       setIsAnalyzing(false)
@@ -214,15 +288,34 @@ export function ResumeJobMatcher() {
     setJobDescription("")
     setJobUrl("")
     setError(null)
+    setShowThankYouDialog(false)
+    setShowQuotaExceededDialog(false)
   }
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-foreground mb-4 text-balance">Resume-Job Matching Assistant</h1>
-        <p className="text-lg text-muted-foreground text-pretty">
-          Upload your resume and job description to get AI-powered matching analysis and recommendations
-        </p>
+      {/* Header with prominent About button */}
+      <div className="relative mb-8">
+        {/* Floating About Button - Top Right */}
+        <div className="absolute top-0 right-0 z-10">
+          <Link href="/about">
+            <Button 
+              className="relative bg-green-600/90 backdrop-blur-sm hover:bg-green-700 text-white font-semibold px-8 py-3 rounded-semi shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-[1.02] border border-green-500/40"
+              size="sm"
+            >
+              <User className="h-4 w-4 mr-2" />
+              👨‍💻 Meet the Developer
+            </Button>
+          </Link>
+        </div>
+        
+        {/* Main Header */}
+        <div className="text-center pr-48">
+          <h1 className="text-4xl font-bold text-foreground mb-4 text-balance">Resume-Job Matching Assistant</h1>
+          <p className="text-lg text-muted-foreground text-pretty">
+            Upload your resume and job description to get AI-powered matching analysis and recommendations
+          </p>
+        </div>
       </div>
 
       {!analysisResult && (
@@ -402,6 +495,119 @@ export function ResumeJobMatcher() {
           </Button>
         </div>
       )}
+
+      {/* Bottom About Section - More prominent */}
+      {!analysisResult && (
+        <div className="mt-12 text-center">
+          <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950/20 dark:to-purple-950/20 rounded-xl p-6 border border-blue-200 dark:border-blue-800">
+            <h3 className="text-lg font-semibold mb-2 text-foreground">
+              💡 Want to know more about this project?
+            </h3>
+            <p className="text-muted-foreground mb-4 text-sm">
+              Meet the developer behind this AI-powered platform and share your feedback to help make it even better!
+            </p>
+            <Link href="/about">
+              <Button 
+                variant="default"
+                className="relative bg-green-600/90 backdrop-blur-sm hover:bg-green-700 text-white font-semibold px-8 py-3 rounded-semi shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-[1.02] border border-green-500/40"
+              
+              >
+                <User className="h-4 w-4 mr-2" />
+                👋 About the Developer & Feedback
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Thank You Dialog */}
+      <AlertDialog open={showThankYouDialog} onOpenChange={setShowThankYouDialog}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-center">
+              <Heart className="h-5 w-5 text-red-500" />
+              Thank You for Using Our Website!
+            </AlertDialogTitle>
+            <div className="text-center space-y-3 text-muted-foreground text-sm">
+              <AlertDialogDescription>
+                🎉 Your resume analysis has been completed successfully! We hope our AI-powered insights help you in your job search journey.
+              </AlertDialogDescription>
+              <AlertDialogDescription>
+                💡 Love our service? We'd really appreciate your feedback and suggestions to make it even better!
+              </AlertDialogDescription>
+              <AlertDialogDescription className="flex items-center justify-center gap-2">
+                <MessageSquare className="h-4 w-4" />
+                Click on "About" to learn more about the developer and share your valuable feedback.
+              </AlertDialogDescription>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2">
+            <AlertDialogAction 
+              onClick={() => setShowThankYouDialog(false)}
+              className="w-full sm:w-auto"
+            >
+              Continue with Results
+            </AlertDialogAction>
+            <Link href="/about">
+              <Button 
+                variant="outline" 
+                className="w-full sm:w-auto"
+                onClick={() => setShowThankYouDialog(false)}
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Give Feedback
+              </Button>
+            </Link>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Quota Exceeded Dialog */}
+      <AlertDialog open={showQuotaExceededDialog} onOpenChange={setShowQuotaExceededDialog}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-center text-orange-600">
+              ⚠️ Server Currently Busy
+            </AlertDialogTitle>
+            <div className="text-center space-y-3 text-muted-foreground text-sm">
+              <AlertDialogDescription>
+                🚧 The current AI server has reached its request limit and is temporarily busy.
+              </AlertDialogDescription>
+              <AlertDialogDescription>
+                💡 <strong>Good news!</strong> You can switch to a different server to continue your analysis right away!
+              </AlertDialogDescription>
+              <AlertDialogDescription className="flex items-center justify-center gap-2 font-medium text-blue-600">
+                🔄 Try switching to Server 2 or Server 3 above
+              </AlertDialogDescription>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2">
+            <AlertDialogAction 
+              onClick={() => setShowQuotaExceededDialog(false)}
+              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700"
+            >
+              ✅ Got it, I'll switch servers
+            </AlertDialogAction>
+            <Button 
+              variant="outline" 
+              className="w-full sm:w-auto"
+              onClick={() => {
+                setShowQuotaExceededDialog(false)
+                // Auto-switch to a different server
+                if (selectedServer === "server2") {
+                  setSelectedServer("server3")
+                } else if (selectedServer === "server1") {
+                  setSelectedServer("server2")
+                } else {
+                  setSelectedServer("server2")
+                }
+              }}
+            >
+              🔄 Auto-Switch Server
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

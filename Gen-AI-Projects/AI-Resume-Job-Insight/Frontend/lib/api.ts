@@ -28,10 +28,24 @@ export interface MatchResult {
 export interface ProcessResumeResponse {
   success: boolean
   error?: string
-  resume_analysis?: ResumeAnalysis
-  job_analysis?: JobAnalysis
-  match_result?: MatchResult
-  visualization?: any
+  resume_id?: string
+  resume_data?: any  // Contains parsed resume information
+  job_data?: any     // Contains parsed job description
+  comparison_result?: any  // Contains the main comparison analysis
+  visualization_data?: any // Contains visualization data
+  // Quota-related properties
+  quotaExceeded?: boolean
+  serverRestarted?: boolean
+  selectedServer?: string
+  message?: string
+  auto_restarting?: boolean
+  auto_restart?: boolean
+  error_type?: string
+  restart_reason?: string
+  server_switch_recommended?: boolean
+  alternative_servers?: string[]
+  estimated_restart_time?: string
+  suggestion?: string
 }
 
 export interface GenerateResumeResponse {
@@ -65,10 +79,69 @@ export async function processResume(
       method: "POST",
       body: formData,
     })
+    
     const datares = await response.json()
+    
+    // Check for quota exceeded errors first, even if response is not ok
     if (!response.ok) {
+      // Check if this is a quota error (status 429 or error message contains quota indicators)
+      if (response.status === 500 || response.status === 429 ||
+          (datares.error && (
+            datares.error.includes("Quota exceeded") ||
+            datares.error.includes("You exceeded your current quota") ||
+            datares.error.includes("generativelanguage.googleapis.com/generate_content_free_tier_requests") ||
+            datares.error.includes("quota_metric")
+          ))) {
+        // Return the quota error info so frontend can handle it properly
+        return {
+          success: false,
+          error: datares.error || "Quota exceeded",
+          quotaExceeded: true,
+          selectedServer: selectedServer,
+          serverRestarted: datares.serverRestarted || false,
+          message: datares.message || "Server quota exceeded. Please try switching to a different server."
+        }
+      }
+      
+      // For other HTTP errors, throw as before
       throw new Error(`HTTP error! status: ${response.status}`)
     }
+    
+    // Check for successful response with quota exceeded error details
+    if (datares && !datares.success) {
+      // Check if backend returned auto_restart flag or api_response_error (from safe_gemini_call_with_auto_restart)
+      if (datares.auto_restarting || datares.auto_restart || 
+          datares.error_type === "quota_exceeded" || 
+          datares.error_type === "api_response_error") {
+        return {
+          success: false,
+          error: datares.error || "Server quota exceeded. Auto-restarting...",
+          quotaExceeded: true,
+          selectedServer: selectedServer,
+          serverRestarted: datares.auto_restarting || datares.auto_restart || false,
+          message: datares.suggestion || datares.message || "Server quota exceeded. Please try switching to a different server."
+        }
+      }
+      
+      // Check if this is a quota error based on error message
+      if (datares.error && (
+        datares.error.includes("Quota exceeded") ||
+        datares.error.includes("You exceeded your current quota") ||
+        datares.error.includes("generativelanguage.googleapis.com/generate_content_free_tier_requests") ||
+        datares.error.includes("quota_metric") ||
+        datares.error.includes("Auto-restarting")
+      )) {
+        return {
+          success: false,
+          error: datares.error,
+          quotaExceeded: true,
+          selectedServer: selectedServer,
+          serverRestarted: datares.serverRestarted || datares.auto_restarting || false,
+          message: datares.message || datares.suggestion || "Server quota exceeded. Please try switching to a different server."
+        }
+      }
+    }
+    
     return datares
   } catch (error) {
     console.error("Error processing resume:", error)
