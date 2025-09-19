@@ -62,8 +62,8 @@ export async function POST(request: NextRequest) {
     const selectedServer = formData.get("selectedServer") as string || "server2"
 
     // Send data directly to FastAPI backend API
-    // const backendUrl = process.env.backendUrl || "https://generativeai-production.up.railway.app/"
-        const backendUrl = process.env.FASTAPI_BACKEND_URL || "http://localhost:8503/";
+    const backendUrl = process.env.backendUrl || "https://generativeai-production.up.railway.app/"
+        // const backendUrl = process.env.FASTAPI_BACKEND_URL || "http://localhost:8503/";
     console.log("🚀 Forwarding request to FastAPI backend...")
 
     // Forward the entire form data to FastAPI backend
