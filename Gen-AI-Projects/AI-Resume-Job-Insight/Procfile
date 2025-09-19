@@ -1,2 +1,1 @@
-# Procfile (no extension)
 web: cd Backend && python -m uvicorn Server:app --host 0.0.0.0 --port $PORT
