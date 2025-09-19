@@ -1,0 +1,22 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.1
+starlette==0.37.2
+
+# LangChain ecosystem
+langchain==0.2.12
+langchain-core==0.2.27
+langchain-google-genai==1.0.6
+
+# PDF & Docs
+pymupdf==1.24.7
+python-multipart==0.0.9
+
+# Environment & Utils
+python-dotenv==1.0.1
+requests==2.32.3
+
+# Google AI
+google-generativeai==0.7.2
+
+# Pandas for data processing
+pandas==2.2.2
