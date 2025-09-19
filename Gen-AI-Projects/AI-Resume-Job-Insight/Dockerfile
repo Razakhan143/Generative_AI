@@ -13,8 +13,11 @@ RUN cd Backend && pip install --no-cache-dir --upgrade pip && pip install --no-c
 # Copy the entire project
 COPY . .
 
+# Change working directory to Backend
+WORKDIR /app/Backend
+
 # Expose port
 EXPOSE $PORT
 
 # Command to run the application
-CMD cd Backend && python -m uvicorn Server:app --host 0.0.0.0 --port $PORT
+CMD ["sh", "-c", "python -m uvicorn Server:app --host 0.0.0.0 --port ${PORT:-8000}"]
