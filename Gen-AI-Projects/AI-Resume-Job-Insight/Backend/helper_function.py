@@ -37,13 +37,21 @@ def parse_resume_with_llm(text: str):
     format_instructions = output_parser.get_format_instructions()
 
     prompt = ChatPromptTemplate.from_template("""
-    You are a professional resume parser.
-    Extract the following fields from the resume text below and return in JSON format.
+    You are a professional resume parser. You MUST return ONLY valid JSON in the exact format specified below.
+
+    CRITICAL INSTRUCTIONS:
+    1. Return ONLY valid JSON - no additional text, explanations, or markdown
+    2. Use the exact field names provided in the format instructions
+    3. If information is missing, use empty string "" for text fields and empty array [] for lists
+    4. Ensure all JSON strings are properly escaped
+    5. Do not include any text before or after the JSON object
 
     {format_instructions}
 
     Resume Text:
     {resume_text}
+
+    Remember: Return ONLY the JSON object with no additional formatting or text.
     """)
 
     prompt = prompt.format_messages(
@@ -53,9 +61,12 @@ def parse_resume_with_llm(text: str):
     return output_parser, prompt
 
 # 3. Check if text contains link
+import re
+
 def contains_link(text: str) -> bool:
-    pattern = r"(https?://\S+|www\.\S+)"
-    return bool(re.search(pattern, text))
+     pattern = r"(https?://\S+|www\.\S+)" 
+     return bool(re.search(pattern, text))
+
 
 # 4. Define function to parse job description using LLM
 def job_description(text: str):
@@ -84,9 +95,10 @@ def job_description(text: str):
         {desc}
 
         {job_description}
-        
+
         Extract and return in structured format:
         {format_instructions}
+        Remember: Return ONLY the JSON object with no additional formatting or text.
         """,
         input_variables=["job_description", "format_instructions"],
     )
@@ -97,12 +109,11 @@ def job_description(text: str):
         format_instructions=format_instructions
     )
     return output_parser, prompt
-
 # 5. Define function to compare resume and job description
 def comparing(resume: dict, jobdes: dict):
     response_schema = [
         ResponseSchema(name="Match Percentage", description="Percentage match between resume and job description (provide only the number)"),
-        ResponseSchema(name="Missing Skills", description="Skills mentioned in the job description but not found in the resume"),
+        ResponseSchema(name="Missing Skills", description="Skills mentioned in the job description but same skills not found in the resume"),
         ResponseSchema(name="Matching Skills", description="Skills that match between resume and job description"),
         ResponseSchema(name="Suggested Improvements", description="Specific suggestions to improve the resume"),
         ResponseSchema(name="Interview Q&A", description="Top 5 interview questions and answers based on the job description"),
@@ -115,15 +126,30 @@ def comparing(resume: dict, jobdes: dict):
     format_instructions = output_parser.get_format_instructions()
     
     template = PromptTemplate(
-        template="""You are a Professional job interviewer who has 15 or more years of experience. Your task is to evaluate the candidate's resume details as {resume} against the job description {jobdes} and provide feedback and return in structured format:
+        template="""You are a Professional job interviewer who has 15+ years of experience. You MUST return ONLY valid JSON in the exact format specified.
+
+        CRITICAL INSTRUCTIONS:
+        1. Return ONLY valid JSON - no additional text
+        2. Use the exact field names provided in the format instructions
+        3. Ensure all JSON strings are properly escaped
+        4. Do not include any text before or after the JSON object
+
+        TASK: Evaluate the candidate's resume against the job description and provide detailed feedback.
+
+        Resume Data: {resume}
+        Job Description: {jobdes}
         
-        Important formatting instructions:
-        - For "Interview Q&A": Format as text with each question starting with "**Q: " and each answer starting with "**A: ". Separate each Q&A pair with double newlines.
-        - For "Match Percentage": Provide only the number (e.g., "85")
-        - For "ATS-optimized keyword list": Provide as formatted text with placement suggestions
-        - For "Suggested rewrites": Provide as bullet-pointed text
+        Special formatting for specific fields:
+        - "Match Percentage": Provide only the number (e.g., "85")
+        - "Interview Q&A": Format as text with questions starting with "**Q: " and answers with "**A: ". Separate Q&A pairs with double newlines.
+        - "ATS-optimized keyword list": Provide as formatted text with placement suggestions
+        - "Suggested rewrites": Provide as bullet-pointed text
         
-        {format_instructions}""",
+        Format Requirements:
+        {format_instructions}
+
+        Remember: Return ONLY the JSON object with no additional formatting or text.
+        """,
         input_variables=["resume", "jobdes", "format_instructions"],
     )
     
@@ -150,28 +176,33 @@ def visualize_data(resume, jobdes):
     output_parser = StructuredOutputParser.from_response_schemas(response_schemas)
     format_instructions = output_parser.get_format_instructions()
 
-    prompt_template = ChatPromptTemplate.from_template(
-        """You are a precise JSON-outputting assistant.
+    prompt_template = PromptTemplate(
+        template="""You are a precise JSON-outputting assistant. You MUST return ONLY valid JSON in the exact format specified.
 
-Produce ONLY valid JSON that exactly follows the structure described in the instructions below (no additional commentary, no explanation).
-If a field value is unknown, return a reasonable default (0 for numbers, [] for lists, curly braces for objects).
+CRITICAL INSTRUCTIONS:
+1. Return ONLY valid JSON - no additional text, explanations, or markdown
+2. Use the exact field names provided in the format instructions
+3. If a field value is unknown, return reasonable defaults (0 for numbers, [] for lists, {{}} for objects)
+4. Ensure all JSON strings are properly escaped
+5. Do not include any text before or after the JSON object
 
 FORMAT INSTRUCTIONS:
 {format_instructions}
 
-INPUT:
-Resume Text:
-{resume_text}
+INPUT DATA:
+Resume: {resume_text}
+Job Description: {job_text}
 
-Job Description Text or URL:
-{job_text}
+REQUIREMENTS:
+- "visual Match Percentage" must be an integer 0–100
+- "visual Confidence scores" keys must be strings, values must be floats between 0 and 1
+- All lists should contain strings
+- All experience values should be numeric
 
-Important:
-- Ensure "Match Percentage" is an integer 0–100.
-- "Confidence scores" keys must be strings and values floats between 0 and 1.
-- All lists should contain strings.
-- All experience values should be numeric.
-""")
+Remember: Return ONLY the JSON object with no additional formatting or text.
+""",
+        input_variables=["resume_text", "job_text", "format_instructions"]
+    )
 
     prompt = prompt_template.format_prompt(
         resume_text=str(resume),

@@ -38,10 +38,8 @@ def safe_gemini_call_with_auto_restart(model, parser, prompt, timeout_seconds=60
             print("⏳ Waiting for Gemini response...")
 
             try:
+                print(future.result())
                 result = future.result(timeout=timeout_seconds-5)  # 5s buffer
-                print("="*50)
-                print("✅ Gemini response received.", result)
-                print("="*50)
                 restart_timer.cancel()
                 return result, None
             except TimeoutError:
@@ -187,7 +185,10 @@ async def process_resume(
 ):
     """Process resume against job description"""
     form = await request.form()
-
+    job_description = form.get("jobUrl", "")
+    if not job_description or job_description.strip() == "":
+        job_description = form.get("jobDescription", "")
+    
     # Server selection
     selected_server = form.get("selectedServer", "server2")
     if selected_server == "server1":
@@ -211,7 +212,6 @@ async def process_resume(
         os.remove(resume_path)
     else:
         return {"success": False, "error": "No resume file provided"}
-
     # Parse resume
     parser_resume, resume_prompt = helper_function.parse_resume_with_llm(resume_text)
     res_resume, error = safe_gemini_call_with_auto_restart(model, parser_resume, resume_prompt)
@@ -238,11 +238,9 @@ async def process_resume(
 
     # Parse job description
     print("🔄 Starting job description parsing...")
-
     parser_jobdes, jobdes_prompt = helper_function.job_description(job_description)
-    print(f"📝 proceeding after job parser")
     res_jobdes, error = safe_gemini_call_with_auto_restart(model, parser_jobdes, jobdes_prompt)
-    
+    print("job description parsed.")
     if error:
         if error.get("auto_restart"):
             return {
