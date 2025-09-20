@@ -38,7 +38,6 @@ def safe_gemini_call_with_auto_restart(model, parser, prompt, timeout_seconds=60
             print("⏳ Waiting for Gemini response...")
 
             try:
-                print(future.result())
                 result = future.result(timeout=timeout_seconds-5)  # 5s buffer
                 restart_timer.cancel()
                 return result, None
